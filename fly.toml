@@ -1,10 +1,10 @@
-app = "slater-bot" 
-primary_region = "ewr" 
-[build] 
-  dockerfile = "Dockerfile" 
-[[vm]] 
-  memory = "256mb" 
-  cpu_kind = "shared" 
-  cpus = 1 
-[processes] 
-  app = "python bot.py" 
+app = "slater-bot"
+primary_region = "ewr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
