@@ -4,6 +4,9 @@ from discord import app_commands
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+import pytz
+
+EST = pytz.timezone("America/New_York")
 import os
 import json
 import traceback
@@ -17,22 +20,32 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-def get_sheet():
-    # Support both file-based and env-based credentials
-    creds_env = os.getenv("GOOGLE_CREDENTIALS")
-    if creds_env:
-        creds_dict = json.loads(creds_env)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    else:
-        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-    client = gspread.authorize(creds)
-    return client.open_by_key(os.getenv("SHEET_ID"))
+# Cache the client so we don't reconnect every command
+_client = None
+_spreadsheet = None
+
+def get_spreadsheet():
+    global _client, _spreadsheet
+    try:
+        if _spreadsheet is None:
+            creds_env = os.getenv("GOOGLE_CREDENTIALS")
+            if creds_env:
+                creds_dict = json.loads(creds_env)
+                creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            else:
+                creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+            _client = gspread.authorize(creds)
+            _spreadsheet = _client.open_by_key(os.getenv("SHEET_ID"))
+        return _spreadsheet
+    except Exception:
+        _spreadsheet = None
+        raise
 
 def get_log_sheet():
-    return get_sheet().worksheet("Order Log")
+    return get_spreadsheet().worksheet("Order Log")
 
 def get_summary_sheet():
-    return get_sheet().worksheet("Summary")
+    return get_spreadsheet().worksheet("Summary")
 
 def get_orders(sheet):
     all_rows = sheet.get_all_values()
@@ -61,6 +74,12 @@ tree = bot.tree
 async def on_ready():
     await tree.sync()
     print(f"✅ {bot.user} is online and synced.")
+    # Pre-connect to sheets on startup
+    try:
+        get_spreadsheet()
+        print("✅ Google Sheets connected.")
+    except Exception as e:
+        print(f"⚠️ Sheets connection failed: {e}")
 
 # ── /order ────────────────────────────────────────────────────────────────────
 @tree.command(name="order", description="Log a new order")
@@ -83,19 +102,17 @@ async def log_order(
         row = next_empty_row(sheet)
         orders = get_orders(sheet)
         order_num = len(orders) + 1
-        now = datetime.now()
+        EST = pytz.timezone("America/New_York")
+        now = datetime.now(EST)
         date = now.strftime("%m/%d/%Y")
         time_str = now.strftime("%I:%M %p")
 
         sheet.update([[
-            date,
-            time_str,
-            placed_by.capitalize(),
+            date, time_str, placed_by.capitalize(),
             order_total,
             preauth_hold if preauth_hold is not None else "",
             settled if settled is not None else "",
-            "",
-            ""
+            "", ""
         ]], f"B{row}:I{row}")
 
         status = "✅ Settled" if settled is not None else "⏳ Pending delivery"
@@ -161,15 +178,12 @@ async def add_credit(interaction: discord.Interaction, amount: float):
     try:
         sheet = get_log_sheet()
         row = next_empty_row(sheet)
-        now = datetime.now()
+        EST = pytz.timezone("America/New_York")
+        now = datetime.now(EST)
 
         sheet.update([[
-            now.strftime("%m/%d/%Y"),
-            now.strftime("%I:%M %p"),
-            "Slater",
-            "", "", "",
-            amount,
-            "Credit top-up"
+            now.strftime("%m/%d/%Y"), now.strftime("%I:%M %p"),
+            "Slater", "", "", "", amount, "Credit top-up"
         ]], f"B{row}:I{row}")
 
         embed = discord.Embed(title="💳 Credit Added", color=0x6C5CE7)
@@ -213,7 +227,7 @@ async def check_balance(interaction: discord.Interaction):
         embed.add_field(name="🟢 Slater", value=f"Orders: **{slater_orders}**\nCredit Added: **${slater_credit:.2f}**", inline=True)
         embed.add_field(name="🟡 Nuke", value=f"Orders: **{nuke_orders}**\nCredit Added: **${nuke_credit:.2f}**", inline=True)
         embed.add_field(name="📦 Total Settled Charges", value=f"**${total_settled:.2f}**", inline=False)
-        embed.set_footer(text=f"Updated {datetime.now().strftime('%m/%d/%Y %I:%M %p')}")
+        embed.set_footer(text=f"Updated {datetime.now(EST).strftime('%m/%d/%Y %I:%M %p')}")
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
@@ -230,7 +244,7 @@ async def update_balance(interaction: discord.Interaction, amount: float):
 
         embed = discord.Embed(title="💳 Capital One Balance Updated", color=0xFDCB6E)
         embed.add_field(name="Available Credit", value=f"**${amount:.2f}**", inline=True)
-        embed.set_footer(text=datetime.now().strftime("%m/%d/%Y %I:%M %p"))
+        embed.set_footer(text=datetime.now(EST).strftime("%m/%d/%Y %I:%M %p"))
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
