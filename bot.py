@@ -251,3 +251,4 @@ async def update_balance(interaction: discord.Interaction, amount: float):
         await interaction.followup.send(f"❌ Error updating balance:\n```{traceback.format_exc()}```")
 
 bot.run(os.getenv("DISCORD_TOKEN"))
+ 
