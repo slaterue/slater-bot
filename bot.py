@@ -5,6 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import os
+import json
 import traceback
 from typing import Optional
 from dotenv import load_dotenv
@@ -17,7 +18,13 @@ SCOPES = [
 ]
 
 def get_sheet():
-    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+    # Support both file-based and env-based credentials
+    creds_env = os.getenv("GOOGLE_CREDENTIALS")
+    if creds_env:
+        creds_dict = json.loads(creds_env)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
     client = gspread.authorize(creds)
     return client.open_by_key(os.getenv("SHEET_ID"))
 
@@ -39,7 +46,7 @@ def get_orders(sheet):
     return orders
 
 def next_empty_row(sheet):
-    col = sheet.col_values(4)  # column D (Placed By)
+    col = sheet.col_values(4)
     for i, val in enumerate(col[3:], start=4):
         if not val:
             return i
@@ -60,7 +67,7 @@ async def on_ready():
 @app_commands.describe(
     placed_by="Who placed the order (Slater or Nuke)",
     order_total="Total order amount in dollars",
-    settled="Settled charge after delivery (optional — fill in later if not known yet)",
+    settled="Settled charge after delivery (optional)",
     preauth_hold="Pre-auth hold amount (optional)"
 )
 async def log_order(
@@ -80,7 +87,6 @@ async def log_order(
         date = now.strftime("%m/%d/%Y")
         time_str = now.strftime("%I:%M %p")
 
-        # Columns B=Date, C=Time, D=Placed By, E=Order Total, F=Pre-Auth, G=Settled, H=Credit Added, I=Notes
         sheet.update([[
             date,
             time_str,
@@ -88,8 +94,8 @@ async def log_order(
             order_total,
             preauth_hold if preauth_hold is not None else "",
             settled if settled is not None else "",
-            "",   # credit added
-            ""    # notes
+            "",
+            ""
         ]], f"B{row}:I{row}")
 
         status = "✅ Settled" if settled is not None else "⏳ Pending delivery"
@@ -126,7 +132,6 @@ async def settle_order(
     try:
         sheet = get_log_sheet()
         orders = get_orders(sheet)
-
         target_row = None
         for (row_idx, order_num, row_data) in orders:
             if order_num == order_number:
@@ -137,7 +142,7 @@ async def settle_order(
             await interaction.followup.send(f"❌ Order #{order_number} not found.")
             return
 
-        sheet.update_cell(target_row, 7, settled_amount)  # column G = settled charge
+        sheet.update_cell(target_row, 7, settled_amount)
 
         embed = discord.Embed(title="✅ Order Settled", color=0x00B894)
         embed.add_field(name="Order #", value=str(order_number), inline=True)
@@ -205,16 +210,8 @@ async def check_balance(interaction: discord.Interaction):
             value=f"Available: **${capital_one:.2f}**\nActive Holds: **${active_holds:.2f}**\n✅ True Usable: **${true_usable:.2f}**",
             inline=False
         )
-        embed.add_field(
-            name="🟢 Slater",
-            value=f"Orders: **{slater_orders}**\nCredit Added: **${slater_credit:.2f}**",
-            inline=True
-        )
-        embed.add_field(
-            name="🟡 Nuke",
-            value=f"Orders: **{nuke_orders}**\nCredit Added: **${nuke_credit:.2f}**",
-            inline=True
-        )
+        embed.add_field(name="🟢 Slater", value=f"Orders: **{slater_orders}**\nCredit Added: **${slater_credit:.2f}**", inline=True)
+        embed.add_field(name="🟡 Nuke", value=f"Orders: **{nuke_orders}**\nCredit Added: **${nuke_credit:.2f}**", inline=True)
         embed.add_field(name="📦 Total Settled Charges", value=f"**${total_settled:.2f}**", inline=False)
         embed.set_footer(text=f"Updated {datetime.now().strftime('%m/%d/%Y %I:%M %p')}")
         await interaction.followup.send(embed=embed)
@@ -239,5 +236,4 @@ async def update_balance(interaction: discord.Interaction, amount: float):
     except Exception as e:
         await interaction.followup.send(f"❌ Error updating balance:\n```{traceback.format_exc()}```")
 
-# ── Run ───────────────────────────────────────────────────────────────────────
 bot.run(os.getenv("DISCORD_TOKEN"))
