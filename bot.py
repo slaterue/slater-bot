@@ -338,3 +338,4 @@ async def update_balance(interaction: discord.Interaction, amount: float):
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 bot.run(os.getenv("DISCORD_TOKEN"))
+ 
